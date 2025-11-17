@@ -1,0 +1,63 @@
+# ============================================================================
+# BASE - Python 3.10 Slim (leve e ideal para produção)
+# ============================================================================
+FROM python:3.10-slim AS base
+
+# Evita buffering e problemas com logs
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# ============================================================================
+# SISTEMA - Dependências básicas do Linux
+# ============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# CRIA DIRETÓRIOS
+# ============================================================================
+WORKDIR /app
+
+# ============================================================================
+# ARQUIVOS DE REQUISITOS
+# ============================================================================
+COPY requirements.txt .
+
+# ============================================================================
+# INSTALA DEPENDÊNCIAS DO PYTHON
+# ============================================================================
+
+# Torna pip mais rápido
+ENV PIP_NO_CACHE_DIR=1
+
+# ---------------------------
+# Instala PyTorch (CPU ONLY)
+# ---------------------------
+RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cpu
+
+# ---------------------------
+# Instala demais dependências
+# ---------------------------
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ============================================================================
+# COPIA O CÓDIGO DA API
+# ============================================================================
+COPY app/ /app/app/
+COPY best_model.pth2 /app/best_model.pth2
+
+# ============================================================================
+# EXPOSE PORT 8000 (FastAPI)
+# ============================================================================
+EXPOSE 8000
+
+# ============================================================================
+# ENTRYPOINT - Executa FastAPI com Uvicorn
+# ============================================================================
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "120"]
