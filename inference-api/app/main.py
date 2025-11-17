@@ -78,3 +78,7 @@ async def processar_imagem(file: UploadFile = File(...)):
     upload_results_json_to_s3(img_id, final_json)
 
     return final_json
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
