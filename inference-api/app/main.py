@@ -13,7 +13,7 @@ app = FastAPI(title="Mamografia Inference API (Pipeline Completo)", version="2.0
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,6 +47,9 @@ async def processar_imagem(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(400, f"Erro ao ler imagem: {str(e)}")
 
+    # Base64 da imagem original (sempre disponível)
+    original_base64 = pil_to_base64(image)
+
     # ======================================================
     # ETAPA 1: DETECÇÃO (Normal vs Câncer) - Random Forest
     # ======================================================
@@ -56,43 +59,64 @@ async def processar_imagem(file: UploadFile = File(...)):
     # Prepara dados iniciais do JSON
     final_json = {
         "uuid": img_id,
-        "s3_raw": raw_key,
-        "s3_processed": None,
-        "etapa_deteccao": rf_result,
-        "etapa_classificacao": None, # Será preenchido se for cancer
-        "resultado_final": rf_result["classe_detectada"]
+
+        "detect": {
+            "classe": rf_result["classe_detectada"],
+            "prob_normal": rf_result["prob_normal"],
+            "prob_cancer": rf_result["prob_cancer"]
+        },
+
+        "classify": None,  # preenchido abaixo, se for CÂNCER
+
+        "resultado_final": rf_result["classe_detectada"],
+
+        "imagem_tratada_base64": None,  # sempre preenchido
+
+        "s3": {
+            "raw": raw_key,
+            "processed": None,
+            "results_json": None
+        }
     }
 
-    processed_key = None
-    treated_base64 = None
-
-    # Se detectar CANCER, executamos a ResNet
+    # =======================================
+    # CASO 1 → CÂNCER: roda ResNet
+    # =======================================
     if rf_result["classe_detectada"] == "CANCER":
         
-        # ======================================================
-        # ETAPA 2: CLASSIFICAÇÃO (Benigno vs Maligno) - ResNet
-        # ======================================================
         tensor, treated_pil = preprocess_image_resnet(image)
-        
-        # Upload da imagem processada (apenas se for relevante para visualização)
-        processed_key = upload_processed_to_s3(img_id, treated_pil)
-        treated_base64 = pil_to_base64(treated_pil)
-        
-        resnet_result = run_inference_resnet(models['resnet'], tensor)
-        
-        final_json["etapa_classificacao"] = resnet_result
-        final_json["s3_processed"] = processed_key
-        final_json["imagem_tratada_base64"] = treated_base64
-        
-        # Atualiza o resultado final para ser mais específico
-        final_json["resultado_final"] = resnet_result["subtipo"] # BENIGNO ou MALIGNO
 
-    # Se for NORMAL, não precisamos rodar a ResNet
-    
-    # Salvar resultado final no S3
-    upload_results_json_to_s3(img_id, final_json)
+        processed_key = upload_processed_to_s3(img_id, treated_pil)
+        final_json["s3"]["processed"] = processed_key
+
+        # Base64 da imagem tratada
+        treated_base64 = pil_to_base64(treated_pil)
+        final_json["imagem_tratada_base64"] = treated_base64
+
+        # Classificação final
+        resnet_result = run_inference_resnet(models['resnet'], tensor)
+
+        final_json["classify"] = {
+            "subtipo": resnet_result["subtipo"],
+            "prob_benigno": resnet_result["prob_benigno"],
+            "prob_maligno": resnet_result["prob_maligno"],
+            "confianca_subtipo": resnet_result["confianca_subtipo"]
+        }
+
+        final_json["resultado_final"] = resnet_result["subtipo"]
+
+    # =======================================
+    # CASO 2 → NORMAL: retorna base64 da original
+    # =======================================
+    else:
+        final_json["imagem_tratada_base64"] = original_base64
+
+    # Upload JSON final ao S3
+    results_key = upload_results_json_to_s3(img_id, final_json)
+    final_json["s3"]["results_json"] = results_key
 
     return final_json
+
 
 @app.get("/health")
 def health():

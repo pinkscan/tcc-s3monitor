@@ -51,6 +51,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ============================================================================
 COPY app/ /app/app/
 COPY best_model.pth2 /app/best_model.pth2
+COPY rf_model.joblib /app/rf_model.joblib
+
 
 # ============================================================================
 # EXPOSE PORT 8000 (FastAPI)
